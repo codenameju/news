@@ -38,9 +38,9 @@ class Config:
 
     RSS_MAP = {
         "Economy": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2RtY0hNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "Tech": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR1F4TG5vZUVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "Society": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "World": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko"
+        "Tech": "https://www.reutersagency.com/feed/?best-sectors=technologyhttps://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR1F4TG5vZUVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:kopost_type=best",
+        "Society": "https://feeds.bbci.co.uk/news/rss.xml",
+        "World": "https://feeds.bbci.co.uk/news/uk/rss.xml"
     }
 
 st.set_page_config(page_title=Config.PAGE_TITLE, page_icon=Config.PAGE_ICON, layout="wide")
