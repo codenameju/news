@@ -1,6 +1,7 @@
 import streamlit as st
 from google import genai
 from groq import Groq
+from openai import OpenAI
 import feedparser
 import sqlite3
 import datetime
@@ -344,11 +345,13 @@ class DatabaseManager:
 # 🧠 3. AI 에이전트
 # ==========================================
 class AIAgent:
-    def __init__(self, api_key, groq_api_key=None):
+    def __init__(self, api_key, groq_api_key=None, xai_api_key=None):
         self.api_key = api_key
         self.groq_api_key = groq_api_key
+        self.xai_api_key = xai_api_key
         self.client = None
         self.groq_client = None
+        self.xai_client = None
 
         if self.api_key:
             try:
@@ -361,6 +364,12 @@ class AIAgent:
                 self.groq_client = Groq(api_key=self.groq_api_key)
             except Exception as e:
                 logger.error(f"Groq Client Init Error: {e}")
+
+        if self.xai_api_key:
+            try:
+                self.xai_client = OpenAI(api_key=self.xai_api_key, base_url="https://api.x.ai/v1")
+            except Exception as e:
+                logger.error(f"xAI Client Init Error: {e}")
 
     def _call_gemini_with_retry(self, model, contents, max_retries=3):
         import random
@@ -414,8 +423,35 @@ class AIAgent:
                     raise e
         return None
 
+    def _call_xai_with_retry(self, model, messages, max_retries=3):
+        import random
+
+        for attempt in range(max_retries):
+            try:
+                response = self.xai_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.5,
+                    response_format={"type": "json_object"}
+                )
+                return response
+            except Exception as e:
+                error_str = str(e)
+                if '429' in error_str or 'rate_limit' in error_str.lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
+                        logger.warning(f"xAI rate limited. Waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Max retries ({max_retries}) reached. Giving up.")
+                        raise e
+                else:
+                    raise e
+        return None
+
     def curate_news(self, feed_entries, target_category):
-        if not self.groq_client and not self.client:
+        if not self.xai_client and not self.groq_client and not self.client:
             return []
 
         input_data = [{"title": e.title, "link": e.link} for e in feed_entries]
@@ -436,7 +472,16 @@ class AIAgent:
         - "category": '{target_category}'
         """
         try:
-            if self.groq_client:
+            if self.xai_client:
+                messages = [
+                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean."},
+                    {"role": "user", "content": f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"}
+                ]
+                response = self._call_xai_with_retry('grok-beta', messages)
+                if response:
+                    return clean_json_response(response.choices[0].message.content)
+                return []
+            elif self.groq_client:
                 messages = [
                     {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean."},
                     {"role": "user", "content": f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"}
@@ -475,7 +520,8 @@ class AIAgent:
             return []
 
     def generate_vocab_from_text(self, text_input):
-        if not self.groq_client and not self.client: return []
+        if not self.xai_client and not self.groq_client and not self.client:
+            return []
 
         prompt = f"""
         Analyze the following English words or text: "{text_input}"
@@ -489,7 +535,16 @@ class AIAgent:
         - "examples": Provide exactly 2 examples (ENGLISH ONLY).
         """
         try:
-            if self.groq_client:
+            if self.xai_client:
+                messages = [
+                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences."},
+                    {"role": "user", "content": prompt}
+                ]
+                response = self._call_xai_with_retry('grok-beta', messages)
+                if response:
+                    return clean_json_response(response.choices[0].message.content)
+                return []
+            elif self.groq_client:
                 messages = [
                     {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences."},
                     {"role": "user", "content": prompt}
@@ -508,7 +563,7 @@ class AIAgent:
             return []
 
     def evaluate_sentence(self, target_word, user_sentence):
-        if not self.groq_client and not self.client:
+        if not self.xai_client and not self.groq_client and not self.client:
             return {"is_correct": False, "feedback": "API Key Error"}
 
         prompt = f"""
@@ -518,7 +573,21 @@ class AIAgent:
         Output JSON: "is_correct" (bool), "feedback" (Korean).
         """
         try:
-            if self.groq_client:
+            if self.xai_client:
+                messages = [
+                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy."},
+                    {"role": "user", "content": prompt}
+                ]
+                response = self._call_xai_with_retry('grok-beta', messages)
+                if response:
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict):
+                        return result
+                    elif isinstance(result, list) and len(result) > 0:
+                        return result[0]
+                    return {"is_correct": False, "feedback": "Invalid response"}
+                return {"is_correct": False, "feedback": "AI Error: No response"}
+            elif self.groq_client:
                 messages = [
                     {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy."},
                     {"role": "user", "content": prompt}
@@ -565,12 +634,13 @@ def main():
         # API Key: Secrets (.streamlit/secrets.toml)에서만 읽기
         api_key = st.secrets.get("GOOGLE_API_KEY", "")
         groq_api_key = st.secrets.get("GROQ_API_KEY", "")
+        xai_api_key = st.secrets.get("XAI_API_KEY", "")
 
         st.divider()
         menu = st.radio("MENU", ["📰 Smart News", "📸 단어 추가", "🧠 Sentence Quiz", "⚙️ 설정/백업"])
 
     db = DatabaseManager(Config.DB_FILE)
-    ai = AIAgent(api_key, groq_api_key)
+    ai = AIAgent(api_key, groq_api_key, xai_api_key)
 
     # ==========================
     # 1. 뉴스 섹션
@@ -581,7 +651,7 @@ def main():
         tab_feed, tab_scrap = st.tabs(["📡 전체 뉴스 피드", "⭐ 내 스크랩북"])
 
         with tab_feed:
-            if st.button("🔄 최신 뉴스 업데이트 (12건)", type="primary"):
+            if st.button("🔄 최신 뉴스 업데이트 (20건)", type="primary"):
                 if not api_key:
                     st.error("API Key가 필요합니다.")
                 else:
@@ -604,7 +674,7 @@ def main():
                             logger.info(f"[{cat_name}] New candidates: {len(candidates)}")
 
                             if candidates:
-                                news_data = ai.curate_news(candidates[:3], cat_name)
+                                news_data = ai.curate_news(candidates[:5], cat_name)
                                 logger.info(f"[{cat_name}] AI curated: {len(news_data) if news_data else 0}")
 
                                 if news_data:
