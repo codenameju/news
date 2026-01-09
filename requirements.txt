@@ -51,6 +51,7 @@ soupsieve
 starlette
 streamlit==1.52.2
 tenacity
+groq>=0.18.0
 toml
 tornado
 tqdm

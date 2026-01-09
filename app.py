@@ -1,5 +1,6 @@
 import streamlit as st
 from google import genai
+from groq import Groq
 import feedparser
 import sqlite3
 import datetime
@@ -13,6 +14,7 @@ import pandas as pd
 import urllib.parse
 from PIL import Image
 from fpdf import FPDF
+import base64
 
 # ==========================================
 # ⚙️ 0. 설정 및 로깅
@@ -342,16 +344,25 @@ class DatabaseManager:
 # 🧠 3. AI 에이전트
 # ==========================================
 class AIAgent:
-    def __init__(self, api_key):
+    def __init__(self, api_key, groq_api_key=None):
         self.api_key = api_key
+        self.groq_api_key = groq_api_key
         self.client = None
+        self.groq_client = None
+
         if self.api_key:
             try:
                 self.client = genai.Client(api_key=self.api_key)
             except Exception as e:
-                logger.error(f"Client Init Error: {e}")
+                logger.error(f"Gemini Client Init Error: {e}")
 
-    def _call_with_retry(self, model, contents, max_retries=3):
+        if self.groq_api_key:
+            try:
+                self.groq_client = Groq(api_key=self.groq_api_key)
+            except Exception as e:
+                logger.error(f"Groq Client Init Error: {e}")
+
+    def _call_gemini_with_retry(self, model, contents, max_retries=3):
         import random
 
         for attempt in range(max_retries):
@@ -366,7 +377,34 @@ class AIAgent:
                 if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
                     if attempt < max_retries - 1:
                         wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
-                        logger.warning(f"Rate limited. Waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
+                        logger.warning(f"Gemini rate limited. Waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Max retries ({max_retries}) reached. Giving up.")
+                        raise e
+                else:
+                    raise e
+        return None
+
+    def _call_groq_with_retry(self, model, messages, max_retries=3):
+        import random
+
+        for attempt in range(max_retries):
+            try:
+                response = self.groq_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.5,
+                    response_format={"type": "json_object"}
+                )
+                return response
+            except Exception as e:
+                error_str = str(e)
+                if '429' in error_str or 'rate_limit' in error_str.lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
+                        logger.warning(f"Groq rate limited. Waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -377,15 +415,16 @@ class AIAgent:
         return None
 
     def curate_news(self, feed_entries, target_category):
-        if not self.client: return []
-        
+        if not self.groq_client and not self.client:
+            return []
+
         input_data = [{"title": e.title, "link": e.link} for e in feed_entries]
-        
+
         prompt = f"""
         You are a top-tier Economic Analyst. Analyze the news (Category: {target_category}) and select top 5 most critical articles.
-        
+
         For each article, provide a STRUCTURAL ANALYSIS (Korean):
-        
+
         1. **📊 현상 (The Fact)**: What happened? (Include exact numbers).
         2. **🔍 원인 분석 (Why)**: WHY did this happen? (Root cause).
         3. **🔮 전망 및 경고 (Outlook)**: Risk or implication.
@@ -397,10 +436,20 @@ class AIAgent:
         - "category": '{target_category}'
         """
         try:
-            response = self._call_with_retry('gemini-2.5-flash-lite', f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}")
-            if response:
-                return clean_json_response(response.text)
-            return []
+            if self.groq_client:
+                messages = [
+                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean."},
+                    {"role": "user", "content": f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"}
+                ]
+                response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
+                if response:
+                    return clean_json_response(response.choices[0].message.content)
+                return []
+            else:
+                response = self._call_gemini_with_retry('gemini-2.5-flash-lite', f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}")
+                if response:
+                    return clean_json_response(response.text)
+                return []
         except Exception as e:
             logger.error(f"News AI Error: {e}")
             return []
@@ -417,7 +466,7 @@ class AIAgent:
         - "examples": Provide exactly 2 examples (ENGLISH ONLY. DO NOT include Korean translation).
         """
         try:
-            response = self._call_with_retry('gemini-2.5-flash-lite', [prompt, image])
+            response = self._call_gemini_with_retry('gemini-2.5-flash-lite', [prompt, image])
             if response:
                 return clean_json_response(response.text)
             return []
@@ -426,8 +475,8 @@ class AIAgent:
             return []
 
     def generate_vocab_from_text(self, text_input):
-        if not self.client: return []
-        
+        if not self.groq_client and not self.client: return []
+
         prompt = f"""
         Analyze the following English words or text: "{text_input}"
 
@@ -440,16 +489,27 @@ class AIAgent:
         - "examples": Provide exactly 2 examples (ENGLISH ONLY).
         """
         try:
-            response = self._call_with_retry('gemini-2.5-flash-lite', prompt)
-            if response:
-                return clean_json_response(response.text)
-            return []
+            if self.groq_client:
+                messages = [
+                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences."},
+                    {"role": "user", "content": prompt}
+                ]
+                response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
+                if response:
+                    return clean_json_response(response.choices[0].message.content)
+                return []
+            else:
+                response = self._call_gemini_with_retry('gemini-2.5-flash-lite', prompt)
+                if response:
+                    return clean_json_response(response.text)
+                return []
         except Exception as e:
             logger.error(f"Text Gen Error: {e}")
             return []
 
     def evaluate_sentence(self, target_word, user_sentence):
-        if not self.client: return {"is_correct": False, "feedback": "API Key Error"}
+        if not self.groq_client and not self.client:
+            return {"is_correct": False, "feedback": "API Key Error"}
 
         prompt = f"""
         Target Word: "{target_word}"
@@ -458,10 +518,25 @@ class AIAgent:
         Output JSON: "is_correct" (bool), "feedback" (Korean).
         """
         try:
-            response = self._call_with_retry('gemini-2.5-flash-lite', prompt)
-            if response:
-                return clean_json_response(response.text)
-            return {"is_correct": False, "feedback": "AI Error: No response"}
+            if self.groq_client:
+                messages = [
+                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy."},
+                    {"role": "user", "content": prompt}
+                ]
+                response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
+                if response:
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict):
+                        return result
+                    elif isinstance(result, list) and len(result) > 0:
+                        return result[0]
+                    return {"is_correct": False, "feedback": "Invalid response"}
+                return {"is_correct": False, "feedback": "AI Error: No response"}
+            else:
+                response = self._call_gemini_with_retry('gemini-2.5-flash-lite', prompt)
+                if response:
+                    return clean_json_response(response.text)
+                return {"is_correct": False, "feedback": "AI Error: No response"}
         except Exception as e:
             return {"is_correct": False, "feedback": f"AI Error: {e}"}
 
@@ -489,12 +564,13 @@ def main():
 
         # API Key: Secrets (.streamlit/secrets.toml)에서만 읽기
         api_key = st.secrets.get("GOOGLE_API_KEY", "")
-        
+        groq_api_key = st.secrets.get("GROQ_API_KEY", "")
+
         st.divider()
         menu = st.radio("MENU", ["📰 Smart News", "📸 단어 추가", "🧠 Sentence Quiz", "⚙️ 설정/백업"])
 
     db = DatabaseManager(Config.DB_FILE)
-    ai = AIAgent(api_key)
+    ai = AIAgent(api_key, groq_api_key)
 
     # ==========================
     # 1. 뉴스 섹션
