@@ -111,22 +111,47 @@ def resize_image_for_api(image_file, max_size=1024):
 
 def get_audio_html(text):
     """
-    Youdao API 사용 (단어 전용)
+    Google Translate TTS 사용 (영어 단어 발음, 복합어/구 지원)
     """
     if not text: return ""
-    
+
     # 텍스트 정제
     clean_text = str(text).replace('\n', ' ').replace('"', '').replace("'", "").strip()
     if not clean_text: return ""
-    
-    encoded_text = urllib.parse.quote(clean_text)
-    tts_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=1"
-    
-    return f"""
-    <audio controls style="height: 25px; width: 220px; margin-top:5px; margin-bottom:5px;">
-        <source src="{tts_url}" type="audio/mpeg">
-    </audio>
-    """
+
+    # 복합어/구인 경우 간단어 분리 (예: "callused hand" -> "callused hand")
+    # 스페이스로 구분하거나 케멜 케이스로 분리
+    words = []
+    current_word = ""
+    for char in clean_text:
+        if char.isupper() or char.islower():
+            current_word += char
+        else:
+            if current_word:
+                words.append(current_word)
+            current_word = ""
+    if current_word:
+        words.append(current_word)
+
+    # 단어가 너무 많으면 처음 2개만 사용
+    if len(words) > 2:
+        words = words[:2]
+
+    # 각 단어에 대해 TTS URL 생성
+    audio_htmls = []
+    for word in words:
+        encoded_text = urllib.parse.quote(word)
+        # Google Translate TTS API (무료, 영어 최적화)
+        tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q={encoded_text}&tl=en"
+
+        audio_htmls.append(f"""
+        <audio controls style="height: 25px; width: 180px; margin-top:2px; margin-bottom:2px; display:inline-block;">
+            <source src="{tts_url}" type="audio/mpeg">
+        </audio>
+        """)
+
+    return "".join(audio_htmls)
+
 
 # ==========================================
 # 🗄️ 2. 데이터베이스 매니저
