@@ -474,21 +474,27 @@ class AIAgent:
         try:
             if self.xai_client:
                 messages = [
-                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean."},
+                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean. Output ONLY a JSON array, no wrapping object."},
                     {"role": "user", "content": f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"}
                 ]
                 response = self._call_xai_with_retry('grok-beta', messages)
                 if response:
-                    return clean_json_response(response.choices[0].message.content)
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict) and 'articles' in result:
+                        return result['articles']
+                    return result
                 return []
             elif self.groq_client:
                 messages = [
-                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean."},
+                    {"role": "system", "content": "You are a top-tier Economic Analyst who provides structured news analysis in Korean. Output ONLY a JSON array, no wrapping object."},
                     {"role": "user", "content": f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"}
                 ]
                 response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
                 if response:
-                    return clean_json_response(response.choices[0].message.content)
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict) and 'articles' in result:
+                        return result['articles']
+                    return result
                 return []
             else:
                 response = self._call_gemini_with_retry('gemini-2.5-flash-lite', f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}")
@@ -527,7 +533,7 @@ class AIAgent:
         Analyze the following English words or text: "{text_input}"
 
         For each distinct word (or key phrase) found in the input, generate a JSON object.
-        Output a JSON LIST with these keys:
+        Output ONLY a JSON array with these keys:
         - "target_word": The English word provided.
         - "meaning": **Definition in ENGLISH ONLY**. (Simple & Clear).
         - "original_sentence": Create a natural, high-quality sentence using this word (acting as context).
@@ -537,21 +543,27 @@ class AIAgent:
         try:
             if self.xai_client:
                 messages = [
-                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences."},
+                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences. Output ONLY a JSON array, no wrapping object."},
                     {"role": "user", "content": prompt}
                 ]
                 response = self._call_xai_with_retry('grok-beta', messages)
                 if response:
-                    return clean_json_response(response.choices[0].message.content)
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict) and 'words' in result:
+                        return result['words']
+                    return result
                 return []
             elif self.groq_client:
                 messages = [
-                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences."},
+                    {"role": "system", "content": "You are a vocabulary expert who provides English definitions and example sentences. Output ONLY a JSON array, no wrapping object."},
                     {"role": "user", "content": prompt}
                 ]
                 response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
                 if response:
-                    return clean_json_response(response.choices[0].message.content)
+                    result = clean_json_response(response.choices[0].message.content)
+                    if isinstance(result, dict) and 'words' in result:
+                        return result['words']
+                    return result
                 return []
             else:
                 response = self._call_gemini_with_retry('gemini-2.5-flash-lite', prompt)
@@ -570,12 +582,12 @@ class AIAgent:
         Target Word: "{target_word}"
         User Sentence: "{user_sentence}"
         Task: Check accuracy.
-        Output JSON: "is_correct" (bool), "feedback" (Korean).
+        Output ONLY a JSON object: "is_correct" (bool), "feedback" (Korean).
         """
         try:
             if self.xai_client:
                 messages = [
-                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy."},
+                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy. Output ONLY a JSON object, no wrapping object."},
                     {"role": "user", "content": prompt}
                 ]
                 response = self._call_xai_with_retry('grok-beta', messages)
@@ -589,7 +601,7 @@ class AIAgent:
                 return {"is_correct": False, "feedback": "AI Error: No response"}
             elif self.groq_client:
                 messages = [
-                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy."},
+                    {"role": "system", "content": "You are an English language expert who evaluates sentence accuracy. Output ONLY a JSON object, no wrapping object."},
                     {"role": "user", "content": prompt}
                 ]
                 response = self._call_groq_with_retry('llama-3.3-70b-versatile', messages)
