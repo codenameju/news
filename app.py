@@ -572,20 +572,22 @@ class AIAgent:
         IF the title already describes the situation:
         - SKIP "📊 현상 (The Fact)" section to avoid redundancy
         - ONLY provide: 2. **🔍 원인 분석 (Why)** and 3. **🔮 전망 및 경고 (Outlook)**
-        - Summary should combine only these 2 points
+        - CRITICAL: Summary must be exactly 3 lines maximum, combining only these 2 points
+        - Format: Line 1 = 원인 분석, Line 2 = 전망 및 경고 (split if needed), Line 3 = blank or very brief
 
         IF the title does NOT describe the situation:
         - Provide ALL 3 sections: 1. **📊 현상 (The Fact)**, 2. **🔍 원인 분석 (Why)**, 3. **🔮 전망 및 경고 (Outlook)**
-        - Summary should combine all 3 points
+        - CRITICAL: Summary must be exactly 3 lines maximum
+        - Format: Line 1 = 현상, Line 2 = 원인 분석, Line 3 = 전망 및 경고
 
         For each article, provide:
         1. **📊 현상 (The Fact)**: What happened? (Include exact numbers).
-        2. **🔍 원인 분석 (Why)**: WHY did this happen? (Root cause).
+        2. **🔍 원인 분석 (Why)**: WHY did this happen? (Root cause). Use proper sentence structure (e.g., "소유해야 한다고" → "소유해야 한다고 주장", "주장하고 있다고" → "주장하며 있다고").
         3. **🔮 전망 및 경고 (Outlook)**: Risk or implication.
 
         Output JSON keys:
         - "title": Korean title (keep original meaning, don't change)
-        - "summary": "A single string combining the analysis points with newlines. Skip 현상 if title already describes situation."
+        - "summary": "EXACTLY 3 LINES MAXIMUM. No more, no less. Use newlines to separate lines."
         - "link": Original link
         - "category": '{target_category}'
         """

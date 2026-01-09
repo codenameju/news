@@ -164,21 +164,25 @@ def create_card_news(news_items, max_count=5):
     kst_time = get_kst_now().strftime("%Y년 %m월 %d일 %H:%M (KST)")
 
     message = f"""<b>📰 AI 경제 브리핑</b>
-<i>{kst_time}</i>
+ <i>{kst_time}</i>
 
-"""
+ """
 
     for idx, news in enumerate(news_items[:max_count], 1):
         news_id, title, summary, url, date, category, _ = news
 
+        # 요약에서 줄 바꿈 정리 (최대 3줄)
+        summary_lines = summary.split('\n')
+        clean_summary = '\n'.join(summary_lines[:3]) if len(summary_lines) > 3 else summary
+
         message += f"""<b>{idx}. {title}</b>
-📂 {category}
+ 📂 {category}
 
-{summary}
+ {clean_summary}
 
-<a href="{url}">📎 원문 보기</a>
+ <a href="{url}">📎 원문 보기</a>
 
-"""
+ """
 
     return message
 
