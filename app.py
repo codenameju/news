@@ -16,6 +16,7 @@ import urllib.parse
 from PIL import Image
 from fpdf import FPDF
 import base64
+import pytz
 
 # ==========================================
 # ⚙️ 0. 설정 및 로깅
@@ -38,9 +39,8 @@ class Config:
 
     RSS_MAP = {
         "Economy": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2RtY0hNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "Tech": "https://www.reutersagency.com/feed/?best-sectors=technologyhttps://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR1F4TG5vZUVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:kopost_type=best",
-        "Society": "https://feeds.bbci.co.uk/news/rss.xml",
-        "World": "https://feeds.bbci.co.uk/news/uk/rss.xml"
+        "Society": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
+        "World": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko"
     }
 
 st.set_page_config(page_title=Config.PAGE_TITLE, page_icon=Config.PAGE_ICON, layout="wide")
@@ -48,6 +48,15 @@ st.set_page_config(page_title=Config.PAGE_TITLE, page_icon=Config.PAGE_ICON, lay
 # ==========================================
 # 🛠️ 1. 유틸리티
 # ==========================================
+def get_kst_now():
+    """한국 시간(KST) datetime 객체 반환"""
+    kst = pytz.timezone('Asia/Seoul')
+    return datetime.datetime.now(kst)
+
+def get_kst_today():
+    """한국 시간(KST) 기준 오늘 날짜 문자열 반환 (YYYY-MM-DD)"""
+    return get_kst_now().strftime('%Y-%m-%d')
+
 def ensure_fonts():
     if not os.path.exists(Config.FONT_DIR):
         os.makedirs(Config.FONT_DIR)
@@ -167,7 +176,7 @@ class DatabaseManager:
 
     def save_news_bulk(self, news_list):
         if not news_list: return 0
-        today = datetime.date.today().isoformat()
+        today = get_kst_today()
         count = 0
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -179,10 +188,10 @@ class DatabaseManager:
                     else:
                         summary_txt = str(summary_raw) if summary_raw else ""
 
-                    c.execute("""INSERT OR IGNORE INTO news 
-                              (date, title, summary, url, category, is_saved, user_note) 
+                    c.execute("""INSERT OR IGNORE INTO news
+                              (date, title, summary, url, category, is_saved, user_note)
                               VALUES (?, ?, ?, ?, ?, 0, '')""",
-                              (today, item.get('title'), summary_txt, 
+                              (today, item.get('title'), summary_txt,
                                item.get('link'), item.get('category')))
                     if c.rowcount > 0: count += 1
                 except Exception as e:
@@ -225,7 +234,7 @@ class DatabaseManager:
 
     def add_vocab_from_df(self, book, df):
         if df.empty: return 0
-        today = datetime.date.today().isoformat()
+        today = get_kst_today()
         count = 0
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -236,17 +245,17 @@ class DatabaseManager:
                         val_str = str(val) if pd.notna(val) else ""
                         return val_str.strip()
 
-                    c.execute("""INSERT OR IGNORE INTO vocab 
-                                 (book, word, meaning, grammar, sentence, example, added_date, status) 
+                    c.execute("""INSERT OR IGNORE INTO vocab
+                                 (book, word, meaning, grammar, sentence, example, added_date, status)
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                               (
-                                  book, 
-                                  clean_field(row.get('target_word')), 
-                                  clean_field(row.get('meaning')), 
-                                  clean_field(row.get('grammar_point')), 
-                                  clean_field(row.get('original_sentence')), 
-                                  clean_field(row.get('examples')), 
-                                  today, 
+                                  book,
+                                  clean_field(row.get('target_word')),
+                                  clean_field(row.get('meaning')),
+                                  clean_field(row.get('grammar_point')),
+                                  clean_field(row.get('original_sentence')),
+                                  clean_field(row.get('examples')),
+                                  today,
                                   'active'
                               ))
                     if c.rowcount > 0: count += 1
@@ -318,7 +327,7 @@ class DatabaseManager:
             correct = res[1] if res[1] else 0
 
             # 오늘 통계
-            today = datetime.date.today().isoformat()
+            today = get_kst_today()
             res_today = conn.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) FROM quiz_log WHERE DATE(created_at) = ?",
                 (today,)
@@ -327,7 +336,7 @@ class DatabaseManager:
             today_correct = res_today[1] if res_today[1] else 0
 
             # 이번 주 통계 (최근 7일)
-            week_ago = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+            week_ago = (get_kst_now() - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
             res_week = conn.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) FROM quiz_log WHERE DATE(created_at) >= ?",
                 (week_ago,)

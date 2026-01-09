@@ -2,6 +2,8 @@ altair==6.0.0
 feedparser==6.0.11
 fpdf==1.7.2
 google-genai==1.57.0
+schedule==1.2.2
+python-dotenv==1.0.1
 
 # Core dependencies (let pip resolve compatible versions)
 annotated-doc
