@@ -38,9 +38,9 @@ class Config:
     FONT_URL_BOLD = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
 
     RSS_MAP = {
-        "Economy": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2RtY0hNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "Society": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko",
-        "World": "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNR2_yDQhNekVnSmxiaWdBUAE?hl=ko&gl=KR&ceid=KR:ko"
+        "Economy": "https://feeds.bbci.co.uk/news/business/rss.xml",
+        "Society": "https://feeds.bbci.co.uk/news/uk/rss.xml",
+        "World": "https://feeds.bbci.co.uk/news/world/rss.xml"
     }
 
 st.set_page_config(page_title=Config.PAGE_TITLE, page_icon=Config.PAGE_ICON, layout="wide")
@@ -148,13 +148,17 @@ class DatabaseManager:
                     )''')
             c.execute('''CREATE TABLE IF NOT EXISTS vocab (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        book TEXT, word TEXT, meaning TEXT, grammar TEXT, 
+                        book TEXT, word TEXT, meaning TEXT, grammar TEXT,
                         sentence TEXT, example TEXT, added_date TEXT, status TEXT DEFAULT 'active',
                         UNIQUE(book, word)
                     )''')
             c.execute('''CREATE TABLE IF NOT EXISTS quiz_log (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         word_id INTEGER, is_correct BOOLEAN, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
                     )''')
             # 컬럼 추가 시도 (이미 존재하는 경우 무시)
             try:
@@ -168,6 +172,7 @@ class DatabaseManager:
                 if "duplicate column name" not in str(e):
                     logger.warning(f"ALTER TABLE user_note failed: {e}")
             conn.commit()
+
 
     def check_url_exists(self, url):
         with self.get_connection() as conn:
@@ -317,7 +322,42 @@ class DatabaseManager:
         with self.get_connection() as conn:
             conn.execute("INSERT INTO quiz_log (word_id, is_correct) VALUES (?, ?)", (word_id, is_correct))
             conn.commit()
-            
+
+    # ==========================
+    # Settings 관련 메서드
+    # ==========================
+    def get_setting(self, key, default=None):
+        """설정 값 가져오기"""
+        with self.get_connection() as conn:
+            result = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if result:
+                return result[0]
+            return default
+
+    def set_setting(self, key, value):
+        """설정 값 저장하기"""
+        with self.get_connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            conn.commit()
+
+    def get_news_schedule_times(self):
+        """뉴스 스케줄링 시간 목록 가져오기 (comma separated string -> list)"""
+        schedule_str = self.get_setting("news_schedule_times", "06:00,12:00,18:00")
+        return [t.strip() for t in schedule_str.split(",") if t.strip()]
+
+    def set_news_schedule_times(self, times):
+        """뉴스 스케줄링 시간 저장 (list -> comma separated string)"""
+        schedule_str = ",".join(times)
+        self.set_setting("news_schedule_times", schedule_str)
+
+    def get_random_unlearned_words(self, count=5):
+        """랜덤 미학습 단어 가져오기 (status='active'인 단어들 중에서)"""
+        with self.get_connection() as conn:
+            return conn.execute(
+                "SELECT id, word, meaning, sentence, example, grammar FROM vocab WHERE status='active' ORDER BY RANDOM() LIMIT ?",
+                (count,)
+            ).fetchall()
+
     def get_stats(self):
         """학습 통계 (전체, 일일, 주간)"""
         with self.get_connection() as conn:
@@ -1030,28 +1070,126 @@ def main():
     # ==========================
     elif menu == "⚙️ 설정/백업":
         st.subheader("⚙️ Settings")
-        
-        books = db.get_books()
-        if books:
-            target = st.selectbox("단어장 선택", books)
-            if st.button("PDF 다운로드"):
-                if ensure_fonts():
-                    pdf = FPDF()
-                    pdf.add_page()
-                    pdf.add_font('Nanum', '', Config.FONT_REG, uni=True)
-                    pdf.set_font('Nanum', '', 14)
-                    pdf.cell(0, 10, f"{target}", 0, 1, 'C')
-                    words = db.get_words(target, 'active')
-                    pdf.set_font('Nanum', '', 11)
-                    for i, w in enumerate(words):
-                        pdf.cell(0, 10, f"{i+1}. {w[1]}", 0, 1)
-                        pdf.multi_cell(0, 8, f"Def: {w[2]}\nOrigin: {w[3]}", border='B')
-                    st.download_button("다운로드", pdf.output(dest='S').encode('latin-1'), f"{target}.pdf")
 
-        st.divider()
-        if os.path.exists(Config.DB_FILE):
-            with open(Config.DB_FILE, "rb") as f:
-                st.download_button("💽 DB 백업 (.db)", f, "backup.db")
+        tab_general, tab_news_schedule, tab_backup = st.tabs(["📝 단어장", "⏰ 뉴스 스케줄", "💾 백업"])
+
+        with tab_general:
+            books = db.get_books()
+            if books:
+                target = st.selectbox("단어장 선택", books, key="pdf_book_select")
+                if st.button("PDF 다운로드", key="pdf_download_btn"):
+                    if ensure_fonts():
+                        pdf = FPDF()
+                        pdf.add_page()
+                        pdf.add_font('Nanum', '', Config.FONT_REG, uni=True)
+                        pdf.set_font('Nanum', '', 14)
+                        pdf.cell(0, 10, f"{target}", 0, 1, 'C')
+                        words = db.get_words(target, 'active')
+                        pdf.set_font('Nanum', '', 11)
+                        for i, w in enumerate(words):
+                            pdf.cell(0, 10, f"{i+1}. {w[1]}", 0, 1)
+                            pdf.multi_cell(0, 8, f"Def: {w[2]}\nOrigin: {w[3]}", border='B')
+                        st.download_button("다운로드", pdf.output(dest='S').encode('latin-1'), f"{target}.pdf")
+            else:
+                st.info("단어장이 없습니다.")
+
+        with tab_news_schedule:
+            st.markdown("### ⏰ 뉴스 자동 업데이트 스케줄")
+            st.info("설정된 시간마다 최신 뉴스를 자동으로 수집하여 사이트에 업데이트합니다. (한국 시간 기준)")
+
+            # 현재 스케줄 표시
+            current_schedule = db.get_news_schedule_times()
+            st.markdown("**현재 스케줄:**")
+            for time_str in current_schedule:
+                st.markdown(f"- ⏰ **{time_str}** KST")
+
+            st.divider()
+
+            # 스케줄 설정
+            st.markdown("#### 🔧 스케줄 설정")
+            st.caption("최대 5개의 시간을 설정할 수 있습니다.")
+
+            col_time1, col_time2, col_time3 = st.columns(3)
+            with col_time1:
+                time1 = st.text_input("시간 1", value=current_schedule[0] if len(current_schedule) > 0 else "06:00", key="schedule_time_1", placeholder="HH:MM")
+            with col_time2:
+                time2 = st.text_input("시간 2", value=current_schedule[1] if len(current_schedule) > 1 else "12:00", key="schedule_time_2", placeholder="HH:MM")
+            with col_time3:
+                time3 = st.text_input("시간 3", value=current_schedule[2] if len(current_schedule) > 2 else "18:00", key="schedule_time_3", placeholder="HH:MM")
+
+            col_time4, col_time5, col_btn = st.columns(3)
+            with col_time4:
+                time4 = st.text_input("시간 4", value=current_schedule[3] if len(current_schedule) > 3 else "", key="schedule_time_4", placeholder="HH:MM (선택사항)")
+            with col_time5:
+                time5 = st.text_input("시간 5", value=current_schedule[4] if len(current_schedule) > 4 else "", key="schedule_time_5", placeholder="HH:MM (선택사항)")
+
+            with col_btn:
+                st.write("")  # spacing
+                st.write("")
+                if st.button("💾 스케줄 저장", type="primary", key="save_schedule_btn"):
+                    # 유효성 검사
+                    times = []
+                    for t in [time1, time2, time3, time4, time5]:
+                        if t.strip():
+                            # 시간 형식 검사 (HH:MM)
+                            import re
+                            if not re.match(r'^\d{1,2}:\d{2}$', t.strip()):
+                                st.error(f"'{t}'는 올바른 시간 형식이 아닙니다. HH:MM 형식으로 입력해주세요.")
+                                return
+                            # 시간 범위 검사
+                            hour, minute = map(int, t.strip().split(':'))
+                            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                                st.error(f"'{t}'는 올바른 시간이 아닙니다. 시간: 0-23, 분: 0-59")
+                                return
+                            times.append(t.strip())
+
+                    if times:
+                        db.set_news_schedule_times(times)
+                        st.success(f"✅ 스케줄이 저장되었습니다: {', '.join(times)} KST")
+                        st.info("💡 스케줄러가 실행 중이어야 자동 업데이트가 작동합니다.")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("최소 하나 이상의 시간을 설정해주세요.")
+
+            st.divider()
+
+            # 스케줄러 상태
+            st.markdown("#### 📊 스케줄러 상태")
+            st.caption("별도의 스케줄러 프로세스가 실행 중이어야 자동 업데이트가 작동합니다.")
+
+            col_scheduler_info, col_scheduler_cmd = st.columns(2)
+            with col_scheduler_info:
+                st.markdown("""
+**실행 방법:**
+
+```bash
+# 방법 1: 텔레그램 봇 포함
+python telegram_bot.py
+
+# 방법 2: 뉴스 업데이트만
+python news_scheduler.py
+```
+""")
+            with col_scheduler_cmd:
+                st.code(
+                    "python telegram_bot.py\n# 또는\npython news_scheduler.py",
+                    language="bash"
+                )
+
+            # 마지막 업데이트 시간 표시
+            last_update = db.get_setting("last_news_update", "업데이트 기록 없음")
+            st.markdown(f"**마지막 뉴스 업데이트:** {last_update}")
+
+        with tab_backup:
+            st.markdown("### 💾 데이터 백업")
+
+            # DB 백업
+            if os.path.exists(Config.DB_FILE):
+                with open(Config.DB_FILE, "rb") as f:
+                    st.download_button("💽 DB 백업 (.db)", f, "backup.db", use_container_width=True)
+            else:
+                st.warning("DB 파일이 없습니다.")
 
 if __name__ == "__main__":
     main()

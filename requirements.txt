@@ -4,6 +4,7 @@ fpdf==1.7.2
 google-genai==1.57.0
 schedule==1.2.2
 python-dotenv==1.0.1
+flask==3.1.0
 
 # Core dependencies (let pip resolve compatible versions)
 annotated-doc

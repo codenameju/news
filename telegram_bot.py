@@ -43,7 +43,7 @@ logger = logging.getLogger("TelegramBot")
 load_dotenv()
 
 # 텔레그램 설정
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "7812723458:AAFFwmKfwF2rAhvp1oPAhkhatYoSvpBsU9U")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8550186803:AAGEDWmforGFn_QQyWUY8E6b6jDHN8LJZXM")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5272469108")
 
 # AI API 설정
@@ -247,27 +247,125 @@ def send_scheduled_news():
 
 
 # ==========================================
+# 단어봇 관련 함수
+# ==========================================
+def create_vocab_card(words):
+    """단어 카드뉴스 형식 생성"""
+    kst_time = get_kst_now().strftime("%Y년 %m월 %d일 %H:%M (KST)")
+
+    message = f"""<b>📚 AI 단어 학습</b>
+<i>{kst_time}</i>
+
+오늘 학습할 단어입니다! ✨
+
+"""
+
+    for idx, word in enumerate(words, 1):
+        word_id, word_text, meaning, sentence, example, grammar = word
+
+        message += f"""<b>{idx}. {word_text}</b>
+📖 뜻: {meaning}
+
+📜 예문: {sentence}
+
+💡 {grammar}
+
+"""
+
+    return message
+
+
+def create_vocab_card_with_refresh_button(words):
+    """새로고침 버튼 포함 단어 카드 생성"""
+    if not words:
+        return "<b>📚 AI 단어 학습</b>\n\n학습할 단어가 없습니다.", None
+
+    message = create_vocab_card(words)
+
+    # "다시 받기" 버튼 (callback data는 웹훅에서 처리해야 함)
+    # 간단하게는 URL이나 별도 명령으로 처리
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🔄 다시 받기", "callback_data": "vocab_refresh"}
+            ]
+        ]
+    }
+
+    return message, reply_markup
+
+
+def send_vocab_quiz():
+    """랜덤 단어 퀴즈 전송 (3시간마다)"""
+    try:
+        logger.info(f"Starting vocab quiz at {get_kst_now()}")
+
+        db = DatabaseManager(Config.DB_FILE)
+
+        # 랜덤 미학습 단어 5개 가져오기
+        words = db.get_random_unlearned_words(count=5)
+
+        logger.info(f"Random unlearned words: {len(words)}")
+
+        if not words:
+            logger.warning("No unlearned words found")
+            message = f"""<b>📚 AI 단어 학습</b>
+<i>{get_kst_now().strftime("%Y년 %m월 %d일 %H:%M (KST)")}</i>
+
+🎉 모든 단어를 학습 완료했습니다!
+
+새로운 단어를 추가하고 다시 도전하세요! 💪
+"""
+            send_telegram_message(message)
+            return
+
+        # 단어 카드 형식으로 전송
+        message, reply_markup = create_vocab_card_with_refresh_button(words)
+
+        # 텔레그램으로 전송
+        success = send_telegram_message(message, reply_markup)
+
+        if success:
+            logger.info(f"Vocab quiz sent successfully. {len(words)} words.")
+        else:
+            logger.error("Failed to send vocab quiz")
+
+    except Exception as e:
+        logger.error(f"Error in send_vocab_quiz: {e}")
+
+
+def send_vocab_quiz_manual():
+    """수동으로 단어 퀴즈 전송 (다시 받기 버튼용)"""
+    return send_vocab_quiz()
+
+
+# ==========================================
 # 메인 함수
 # ==========================================
 def main():
     """메인 함수 - 스케줄러 실행"""
     logger.info("=" * 50)
-    logger.info("Telegram News Bot Started")
+    logger.info("Telegram News & Vocab Bot Started")
     logger.info("=" * 50)
 
-    # 스케줄 설정 (한국 시간 기준: 6시, 12시, 18시)
+    # 스케줄 설정 (한국 시간 기준: 뉴스 6시, 12시, 18시 / 단어 3시간마다)
     schedule.every().day.at("06:00").do(send_scheduled_news)
     schedule.every().day.at("12:00").do(send_scheduled_news)
     schedule.every().day.at("18:00").do(send_scheduled_news)
+
+    # 단어 퀴즈 - 3시간마다
+    schedule.every(3).hours.do(send_vocab_quiz)
 
     logger.info("Scheduled jobs:")
     logger.info("  - 06:00 KST: News notification")
     logger.info("  - 12:00 KST: News notification")
     logger.info("  - 18:00 KST: News notification")
+    logger.info("  - Every 3 hours: Vocab quiz")
 
     # 바로 한 번 실행 테스트 (필요시 주석 처리)
     # logger.info("Running immediate test...")
     # send_scheduled_news()
+    # send_vocab_quiz()
 
     # 무한 루프 - 스케줄러 실행
     while True:
@@ -280,7 +378,6 @@ def main():
         except Exception as e:
             logger.error(f"Error in scheduler loop: {e}")
             time.sleep(60)
-
 
 if __name__ == "__main__":
     main()

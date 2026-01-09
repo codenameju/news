@@ -102,6 +102,52 @@ try:
             traceback.print_exc()
             return False
 
+    def test_vocab_quiz():
+        """단어 퀴즈 테스트"""
+        logger.info("=" * 50)
+        logger.info("Test 4: Vocab Quiz")
+        logger.info("=" * 50)
+
+        try:
+            from telegram_bot import send_vocab_quiz, create_vocab_card_with_refresh_button
+
+            # 랜덤 단어 가져오기
+            db = DatabaseManager(Config.DB_FILE)
+            words = db.get_random_unlearned_words(count=5)
+
+            if not words:
+                logger.warning("⚠️ No unlearned words found, creating test data...")
+
+                # 테스트용 단어 생성
+                words = [
+                    (1, "ambiguous", "Not clear or having multiple meanings", "The meaning of this word is ambiguous.", "This is ambiguous; that is clear.", "형용사 뒤에 명사 올 때"),
+                    (2, "pragmatic", "Dealing with things sensibly and realistically", "She took a pragmatic approach.", "A pragmatic solution.", "-ic으로 끝나는 형용사"),
+                ]
+
+            logger.info(f"Random unlearned words: {len(words)}")
+
+            # 카드 생성
+            message, reply_markup = create_vocab_card_with_refresh_button(words)
+
+            logger.info(f"Generated vocab card with {len(words)} words")
+            logger.info(f"Message preview:\n{message[:300]}...")
+
+            # 텔레그램으로 전송
+            success = send_telegram_message(message, reply_markup)
+
+            if success:
+                logger.info("✅ Vocab quiz telegram send test PASSED")
+            else:
+                logger.error("❌ Vocab quiz telegram send test FAILED")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"❌ Vocab quiz test FAILED: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def main():
         """메인 테스트 함수"""
         logger.info("\n" + "=" * 50)
@@ -119,6 +165,9 @@ try:
 
         # 3. 카드뉴스 생성 및 전송 테스트
         results.append(("Card News Generation", test_news_card()))
+
+        # 4. 단어 퀴즈 테스트
+        results.append(("Vocab Quiz", test_vocab_quiz()))
 
         # 결과 요약
         logger.info("\n" + "=" * 50)
