@@ -505,14 +505,14 @@ def main():
         tab_feed, tab_scrap = st.tabs(["📡 전체 뉴스 피드", "⭐ 내 스크랩북"])
 
         with tab_feed:
-            if st.button("🔄 최신 뉴스 업데이트 (20건)", type="primary"):
+            if st.button("🔄 최신 뉴스 업데이트 (12건)", type="primary"):
                 if not api_key:
                     st.error("API Key가 필요합니다.")
                 else:
                     total_cnt = 0
                     progress_bar = st.progress(0)
                     status_box = st.empty()
-                    
+
                     categories = list(Config.RSS_MAP.items())
                     for i, (cat_name, rss_url) in enumerate(categories):
                         status_box.info(f"📡 [{cat_name}] 수집 중... ({i+1}/4)")
@@ -528,13 +528,16 @@ def main():
                             logger.info(f"[{cat_name}] New candidates: {len(candidates)}")
 
                             if candidates:
-                                news_data = ai.curate_news(candidates[:10], cat_name)
+                                news_data = ai.curate_news(candidates[:3], cat_name)
                                 logger.info(f"[{cat_name}] AI curated: {len(news_data) if news_data else 0}")
 
                                 if news_data:
                                     cnt = db.save_news_bulk(news_data)
                                     total_cnt += cnt
                                     logger.info(f"[{cat_name}] Saved: {cnt}")
+
+                                if i < len(categories) - 1:
+                                    time.sleep(2)
                         except Exception as e:
                             logger.error(f"Error {cat_name}: {e}")
                         progress_bar.progress((i + 1) / 4)
