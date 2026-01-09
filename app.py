@@ -171,6 +171,11 @@ class DatabaseManager:
             except sqlite3.OperationalError as e:
                 if "duplicate column name" not in str(e):
                     logger.warning(f"ALTER TABLE user_note failed: {e}")
+            try:
+                c.execute("ALTER TABLE news ADD COLUMN telegram_sent INTEGER DEFAULT 0")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    logger.warning(f"ALTER TABLE telegram_sent failed: {e}")
             conn.commit()
 
 
@@ -221,6 +226,33 @@ class DatabaseManager:
 
         with self.get_connection() as conn:
             return conn.execute(query, params).fetchall()
+
+    def get_unsent_news(self, category_filter=None, date_filter=None):
+        """아직 텔레그램으로 보내지 않은 뉴스만 조회"""
+        query = "SELECT id, title, summary, url, date, category, is_saved FROM news WHERE telegram_sent = 0"
+        params = []
+
+        if category_filter and category_filter != "All":
+            query += " AND category = ?"
+            params.append(category_filter)
+
+        if date_filter and date_filter != "All":
+            query += " AND date = ?"
+            params.append(date_filter)
+
+        query += " ORDER BY date ASC, id ASC LIMIT 10"
+
+        with self.get_connection() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def mark_news_as_sent(self, news_ids):
+        """뉴스를 텔레그램으로 보낸 것으로 표시"""
+        if not news_ids: return
+
+        with self.get_connection() as conn:
+            for news_id in news_ids:
+                conn.execute("UPDATE news SET telegram_sent = 1 WHERE id = ?", (news_id,))
+            conn.commit()
 
     def get_saved_news(self):
         with self.get_connection() as conn:

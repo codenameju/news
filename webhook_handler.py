@@ -11,7 +11,8 @@ import logging
 # 경로 설정
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from telegram_bot import send_vocab_quiz_manual, CHAT_ID
+from telegram_bot import send_vocab_quiz, get_kst_now
+from app import DatabaseManager, Config
 
 try:
     from flask import Flask, request
@@ -30,10 +31,38 @@ logger = logging.getLogger("WebhookHandler")
 
 # 텔레그램 설정
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8550186803:AAGEDWmforGFn_QQyWUY8E6b6jDHN8LJZXM")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5272469108")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 PORT = int(os.getenv("PORT", "5000"))
 
 app = Flask(__name__)
+
+
+def send_telegram_message(text, reply_markup=None):
+    """텔레그램 메시지 전송"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        response = requests.post(url, data=data, timeout=30)
+
+        if response.status_code == 200:
+            logger.info("Telegram message sent successfully")
+            return True
+        else:
+            logger.error(f"Telegram API error: {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Failed to send telegram message: {e}")
+        return False
 
 
 def answer_callback_query(callback_query_id):
@@ -77,13 +106,43 @@ def webhook():
                 # 콜백 응답
                 answer_callback_query(callback_query['id'])
 
-                # 단어 다시 보내기
-                send_vocab_quiz_manual()
+                # DB에서 랜덤 단어 가져오기
+                db = DatabaseManager(Config.DB_FILE)
+                words = db.get_random_unlearned_words(count=5)
+
+                if not words:
+                    message = f"""<b>📚 AI 단어 학습</b>
+<i>{get_kst_now().strftime("%Y년 %m월 %d일 %H:%M (KST)")}</i>
+
+🎉 모든 단어를 학습 완료했습니다!
+
+새로운 단어를 추가하고 다시 도전하세요! ✨
+"""
+                    send_telegram_message(message)
+                    return
+
+                # 단어 카드 형식 생성
+                from telegram_bot import create_vocab_card
+                message = create_vocab_card(words)
+
+                # 버튼 생성
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "🔄 다시 받기", "callback_data": "vocab_refresh"}
+                        ]
+                    ]
+                }
+
+                # 메시지 전송
+                send_telegram_message(message, reply_markup)
 
         return json.dumps({"status": "ok"}), 200
 
     except Exception as e:
         logger.error(f"Error in webhook: {e}")
+        import traceback
+        traceback.print_exc()
         return json.dumps({"status": "error", "message": str(e)}), 500
 
 

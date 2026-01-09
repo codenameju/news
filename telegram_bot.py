@@ -205,40 +205,32 @@ def create_card_news_with_buttons(news_items, max_count=5):
 # 스케줄링된 뉴스 알림 함수
 # ==========================================
 def send_scheduled_news():
-    """스케줄링된 뉴스 알림 전송"""
+    """스케줄링된 뉴스 알림 전송 (아직 보내지 않은 뉴스만)"""
     try:
         logger.info(f"Starting scheduled news notification at {get_kst_now()}")
 
-        # 1. 최신 뉴스 수집
-        logger.info("Fetching latest news...")
-        new_count = fetch_latest_news()
-
-        # 2. 오늘의 뉴스 가져오기
+        # 1. DB에서 아직 텔레그램으로 보내지 않은 뉴스만 가져오기
         db = DatabaseManager(Config.DB_FILE)
         today = get_kst_today()
-        news_list = db.get_news(date_filter=today)
+        news_list = db.get_unsent_news(date_filter=today)
 
-        logger.info(f"Today's news count: {len(news_list)}")
+        logger.info(f"Unsent news count for today: {len(news_list)}")
 
         if not news_list:
-            logger.warning("No news found for today")
-            message = f"""<b>📰 AI 경제 브리핑</b>
-<i>{get_kst_now().strftime("%Y년 %m월 %d일 %H:%M (KST)")}</i>
-
-⚠️ 오늘 새로운 뉴스가 없습니다.
-새로운 뉴스 {new_count}건을 수집했습니다.
-"""
-            send_telegram_message(message)
+            logger.info("No unsent news found. Skipping.")
             return
 
-        # 3. 카드뉴스 형식으로 전송
+        # 2. 카드뉴스 형식으로 전송
         message, reply_markup = create_card_news_with_buttons(news_list, max_count=5)
 
-        # 4. 텔레그램으로 전송
+        # 3. 텔레그램으로 전송
         success = send_telegram_message(message, reply_markup)
 
         if success:
-            logger.info(f"News notification sent successfully. {len(news_list)} articles.")
+            # 4. 보낸 뉴스의 telegram_sent = 1로 업데이트
+            news_ids = [news[0] for news in news_list]
+            db.mark_news_as_sent(news_ids)
+            logger.info(f"News notification sent successfully. {len(news_list)} articles marked as sent.")
         else:
             logger.error("Failed to send news notification")
 
@@ -343,24 +335,23 @@ def send_vocab_quiz_manual():
 # 메인 함수
 # ==========================================
 def main():
-    """메인 함수 - 스케줄러 실행"""
+    """메인 함수 - 스케줄러 실행 (KST 기준)"""
     logger.info("=" * 50)
     logger.info("Telegram News & Vocab Bot Started")
     logger.info("=" * 50)
 
-    # 스케줄 설정 (한국 시간 기준: 뉴스 6시, 12시, 18시 / 단어 3시간마다)
-    schedule.every().day.at("06:00").do(send_scheduled_news)
-    schedule.every().day.at("12:00").do(send_scheduled_news)
-    schedule.every().day.at("18:00").do(send_scheduled_news)
+    # 스케줄 설정 (한국 시간 기준: 뉴스 6시, 12시, 18시)
+    news_schedule_times = ["06:00", "12:00", "18:00"]
+    vocab_interval_hours = 3
 
-    # 단어 퀴즈 - 3시간마다
-    schedule.every(3).hours.do(send_vocab_quiz)
+    # 마지막 실행 시간 추적 (KST)
+    last_news_execution = {}  # {time_str: last_executed_datetime}
+    last_vocab_execution = None
 
-    logger.info("Scheduled jobs:")
-    logger.info("  - 06:00 KST: News notification")
-    logger.info("  - 12:00 KST: News notification")
-    logger.info("  - 18:00 KST: News notification")
-    logger.info("  - Every 3 hours: Vocab quiz")
+    logger.info("Scheduled jobs (KST):")
+    for time_str in news_schedule_times:
+        logger.info(f"  - {time_str} KST: News notification")
+    logger.info(f"  - Every {vocab_interval_hours} hours: Vocab quiz")
 
     # 바로 한 번 실행 테스트 (필요시 주석 처리)
     # logger.info("Running immediate test...")
@@ -370,13 +361,65 @@ def main():
     # 무한 루프 - 스케줄러 실행
     while True:
         try:
-            schedule.run_pending()
+            # 현재 KST 시간 가져오기
+            current_kst = get_kst_now()
+            current_time_str = current_kst.strftime("%H:%M")
+            current_hour = current_kst.hour
+
+            logger.debug(f"Current KST time: {current_time_str}")
+
+            # 뉴스 스케줄 체크
+            for schedule_time in news_schedule_times:
+                # 이 시간대에 대해 아직 오늘 실행하지 않았는지 확인
+                if schedule_time not in last_news_execution:
+                    # 첫 실행이므로 무시하고 기록
+                    pass
+                else:
+                    # 마지막 실행이 오늘인지 확인
+                    last_exec = last_news_execution[schedule_time]
+                    if last_exec.date() != current_kst.date():
+                        # 새로운 날이므로 시간 비교
+                        if current_time_str == schedule_time:
+                            logger.info(f"Executing scheduled news notification at {schedule_time} KST")
+                            send_scheduled_news()
+                            last_news_execution[schedule_time] = current_kst
+                    else:
+                        # 같은 날이면 이미 실행했는지 확인
+                        continue
+
+            # 마지막 실행 기록이 없으면 초기화
+            for schedule_time in news_schedule_times:
+                if schedule_time not in last_news_execution:
+                    last_news_execution[schedule_time] = current_kst
+
+            # 현재 시간이 정확히 스케줄 시간이면 실행
+            if current_time_str in news_schedule_times:
+                if last_news_execution.get(current_time_str):
+                    last_exec = last_news_execution[current_time_str]
+                    if last_exec.date() != current_kst.date() or last_exec.hour != current_kst.hour:
+                        logger.info(f"Executing scheduled news notification at {current_time_str} KST")
+                        send_scheduled_news()
+                        last_news_execution[current_time_str] = current_kst
+
+            # 단어 퀴즈 - 3시간마다 체크
+            if last_vocab_execution is None:
+                last_vocab_execution = current_kst
+            else:
+                hours_since_last = (current_kst - last_vocab_execution).total_seconds() / 3600
+                if hours_since_last >= vocab_interval_hours:
+                    logger.info(f"Executing vocab quiz (every {vocab_interval_hours} hours)")
+                    send_vocab_quiz()
+                    last_vocab_execution = current_kst
+
             time.sleep(60)  # 1분마다 체크
+
         except KeyboardInterrupt:
             logger.info("Bot stopped by user")
             break
         except Exception as e:
             logger.error(f"Error in scheduler loop: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(60)
 
 if __name__ == "__main__":
