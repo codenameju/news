@@ -542,13 +542,25 @@ class AIAgent:
 
         For each article, provide a STRUCTURAL ANALYSIS (Korean):
 
+        IMPORTANT: Check if the title already describes the situation/event (e.g., "Trump owns Greenland", "Arson on New Year's Eve", "Coup in Niger").
+
+        IF the title already describes the situation:
+        - SKIP "📊 현상 (The Fact)" section to avoid redundancy
+        - ONLY provide: 2. **🔍 원인 분석 (Why)** and 3. **🔮 전망 및 경고 (Outlook)**
+        - Summary should combine only these 2 points
+
+        IF the title does NOT describe the situation:
+        - Provide ALL 3 sections: 1. **📊 현상 (The Fact)**, 2. **🔍 원인 분석 (Why)**, 3. **🔮 전망 및 경고 (Outlook)**
+        - Summary should combine all 3 points
+
+        For each article, provide:
         1. **📊 현상 (The Fact)**: What happened? (Include exact numbers).
         2. **🔍 원인 분석 (Why)**: WHY did this happen? (Root cause).
         3. **🔮 전망 및 경고 (Outlook)**: Risk or implication.
 
         Output JSON keys:
-        - "title": Korean title
-        - "summary": "A single string combining the 3 points above with newlines."
+        - "title": Korean title (keep original meaning, don't change)
+        - "summary": "A single string combining the analysis points with newlines. Skip 현상 if title already describes situation."
         - "link": Original link
         - "category": '{target_category}'
         """
