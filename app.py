@@ -64,24 +64,31 @@ def ensure_fonts():
     return r1 and r2
 
 def clean_json_response(text):
+    logger.info(f"AI Raw Response (first 500 chars): {text[:500]}")
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        logger.info(f"JSON parsed successfully: {len(result) if isinstance(result, list) else 'not list'}")
+        return result
     except json.JSONDecodeError:
         # JSON 코드 블록에서 추출 시도
         match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
         if match:
             try:
-                return json.loads(match.group(1))
+                result = json.loads(match.group(1))
+                logger.info(f"JSON from code block parsed: {len(result) if isinstance(result, list) else 'not list'}")
+                return result
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON code block parsing failed: {e}")
         # 배열 패턴으로 추출 시도
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
             try:
-                return json.loads(match.group(0))
+                result = json.loads(match.group(0))
+                logger.info(f"JSON from array pattern parsed: {len(result) if isinstance(result, list) else 'not list'}")
+                return result
             except json.JSONDecodeError as e:
                 logger.warning(f"Array pattern parsing failed: {e}")
-        logger.error("JSON parsing failed completely")
+        logger.error(f"JSON parsing failed completely. Response: {text}")
         return []
 
 def resize_image_for_api(image_file, max_size=1024):
@@ -366,8 +373,8 @@ class AIAgent:
         """
         try:
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}"
+                model='gemini-2.0-flash-exp',
+                contents=prompt
             )
             return clean_json_response(response.text)
         except Exception as e:
@@ -387,7 +394,7 @@ class AIAgent:
         """
         try:
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash-exp',
                 contents=[prompt, image]
             )
             return clean_json_response(response.text)
@@ -411,7 +418,7 @@ class AIAgent:
         """
         try:
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash-exp',
                 contents=prompt
             )
             return clean_json_response(response.text)
@@ -430,7 +437,7 @@ class AIAgent:
         """
         try:
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash-exp',
                 contents=prompt
             )
             return clean_json_response(response.text)
@@ -490,15 +497,23 @@ def main():
                         status_box.info(f"📡 [{cat_name}] 수집 중... ({i+1}/4)")
                         try:
                             feed = feedparser.parse(rss_url)
+                            logger.info(f"[{cat_name}] RSS entries: {len(feed.entries)}")
+
                             candidates = []
                             for entry in feed.entries:
                                 if not db.check_url_exists(entry.link):
                                     candidates.append(entry)
+
+                            logger.info(f"[{cat_name}] New candidates: {len(candidates)}")
+
                             if candidates:
                                 news_data = ai.curate_news(candidates[:10], cat_name)
+                                logger.info(f"[{cat_name}] AI curated: {len(news_data) if news_data else 0}")
+
                                 if news_data:
                                     cnt = db.save_news_bulk(news_data)
                                     total_cnt += cnt
+                                    logger.info(f"[{cat_name}] Saved: {cnt}")
                         except Exception as e:
                             logger.error(f"Error {cat_name}: {e}")
                         progress_bar.progress((i + 1) / 4)
