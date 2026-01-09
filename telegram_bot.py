@@ -205,7 +205,7 @@ def create_card_news_with_buttons(news_items, max_count=5):
 # 스케줄링된 뉴스 알림 함수
 # ==========================================
 def send_scheduled_news():
-    """스케줄링된 뉴스 알림 전송 (아직 보내지 않은 뉴스만)"""
+    """스케줄링된 뉴스 알림 전송 (DB에서 미전송 뉴스만)"""
     try:
         logger.info(f"Starting scheduled news notification at {get_kst_now()}")
 
