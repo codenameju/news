@@ -351,6 +351,31 @@ class AIAgent:
             except Exception as e:
                 logger.error(f"Client Init Error: {e}")
 
+    def _call_with_retry(self, model, contents, max_retries=3):
+        import random
+
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents
+                )
+                return response
+            except Exception as e:
+                error_str = str(e)
+                if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** (attempt + 1)) + random.uniform(0, 1)
+                        logger.warning(f"Rate limited. Waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Max retries ({max_retries}) reached. Giving up.")
+                        raise e
+                else:
+                    raise e
+        return None
+
     def curate_news(self, feed_entries, target_category):
         if not self.client: return []
         
@@ -372,18 +397,17 @@ class AIAgent:
         - "category": '{target_category}'
         """
         try:
-            response = self.client.models.generate_content(
-                model='gemini-2.0-flash-exp',
-                contents=prompt
-            )
-            return clean_json_response(response.text)
+            response = self._call_with_retry('gemini-2.5-flash-lite', f"{prompt}\nDATA: {json.dumps(input_data, ensure_ascii=False)}")
+            if response:
+                return clean_json_response(response.text)
+            return []
         except Exception as e:
             logger.error(f"News AI Error: {e}")
             return []
 
     def extract_vocab(self, image):
         if not self.client: return []
-        
+
         prompt = """
         Extract 5-8 English words. Output JSON:
         - "target_word": English word
@@ -393,11 +417,10 @@ class AIAgent:
         - "examples": Provide exactly 2 examples (ENGLISH ONLY. DO NOT include Korean translation).
         """
         try:
-            response = self.client.models.generate_content(
-                model='gemini-2.0-flash-exp',
-                contents=[prompt, image]
-            )
-            return clean_json_response(response.text)
+            response = self._call_with_retry('gemini-2.5-flash-lite', [prompt, image])
+            if response:
+                return clean_json_response(response.text)
+            return []
         except Exception as e:
             logger.error(f"Vision AI Error: {e}")
             return []
@@ -407,7 +430,7 @@ class AIAgent:
         
         prompt = f"""
         Analyze the following English words or text: "{text_input}"
-        
+
         For each distinct word (or key phrase) found in the input, generate a JSON object.
         Output a JSON LIST with these keys:
         - "target_word": The English word provided.
@@ -417,18 +440,17 @@ class AIAgent:
         - "examples": Provide exactly 2 examples (ENGLISH ONLY).
         """
         try:
-            response = self.client.models.generate_content(
-                model='gemini-2.0-flash-exp',
-                contents=prompt
-            )
-            return clean_json_response(response.text)
+            response = self._call_with_retry('gemini-2.5-flash-lite', prompt)
+            if response:
+                return clean_json_response(response.text)
+            return []
         except Exception as e:
             logger.error(f"Text Gen Error: {e}")
             return []
 
     def evaluate_sentence(self, target_word, user_sentence):
         if not self.client: return {"is_correct": False, "feedback": "API Key Error"}
-        
+
         prompt = f"""
         Target Word: "{target_word}"
         User Sentence: "{user_sentence}"
@@ -436,11 +458,10 @@ class AIAgent:
         Output JSON: "is_correct" (bool), "feedback" (Korean).
         """
         try:
-            response = self.client.models.generate_content(
-                model='gemini-2.0-flash-exp',
-                contents=prompt
-            )
-            return clean_json_response(response.text)
+            response = self._call_with_retry('gemini-2.5-flash-lite', prompt)
+            if response:
+                return clean_json_response(response.text)
+            return {"is_correct": False, "feedback": "AI Error: No response"}
         except Exception as e:
             return {"is_correct": False, "feedback": f"AI Error: {e}"}
 
