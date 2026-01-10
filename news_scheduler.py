@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("NewsScheduler")
 
 
-def fetch_news():
+def fetch_news(api_keys=None):
     """뉴스 수집 함수"""
     try:
         from app import DatabaseManager, AIAgent, Config, feedparser, clean_json_response
@@ -27,13 +27,17 @@ def fetch_news():
 
         logger.info(f"Starting news fetch at {get_kst_now()}")
 
-        # API 키 확인
-        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-        GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-        XAI_API_KEY = os.getenv("XAI_API_KEY", "")
+        if api_keys:
+            GOOGLE_API_KEY = api_keys.get("GOOGLE_API_KEY", "")
+            GROQ_API_KEY = api_keys.get("GROQ_API_KEY", "")
+            XAI_API_KEY = api_keys.get("XAI_API_KEY", "")
+        else:
+            GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+            GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+            XAI_API_KEY = os.getenv("XAI_API_KEY", "")
 
         if not GOOGLE_API_KEY:
-            logger.error("GOOGLE_API_KEY not found in environment variables")
+            logger.error("GOOGLE_API_KEY not found")
             return 0
 
         # 뉴스 수집
@@ -84,7 +88,7 @@ def fetch_news():
         return 0
 
 
-def main():
+def main(api_keys=None):
     """메인 함수 - 스케줄러 실행"""
     logger.info("=" * 50)
     logger.info("News Scheduler Started")
@@ -94,7 +98,7 @@ def main():
 
     # 바로 한 번 실행
     logger.info("Running immediate fetch...")
-    fetch_news()
+    fetch_news(api_keys)
 
     # 무한 루프 - 매 시간 체크
     while True:
@@ -103,7 +107,7 @@ def main():
             time.sleep(3600)  # 1시간 = 3600초
 
             logger.info("Fetching news (scheduled)...")
-            fetch_news()
+            fetch_news(api_keys)
 
         except KeyboardInterrupt:
             logger.info("Scheduler stopped by user")

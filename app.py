@@ -17,6 +17,8 @@ from PIL import Image
 from fpdf import FPDF
 import base64
 import pytz
+import threading
+import subprocess
 
 # ==========================================
 # ⚙️ 0. 설정 및 로깅
@@ -176,6 +178,7 @@ class DatabaseManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         book TEXT, word TEXT, meaning TEXT, grammar TEXT,
                         sentence TEXT, example TEXT, added_date TEXT, status TEXT DEFAULT 'active',
+                        usage_count INTEGER DEFAULT 0,
                         UNIQUE(book, word)
                     )''')
             c.execute('''CREATE TABLE IF NOT EXISTS quiz_log (
@@ -197,6 +200,11 @@ class DatabaseManager:
             except sqlite3.OperationalError as e:
                 if "duplicate column name" not in str(e):
                     logger.warning(f"ALTER TABLE user_note failed: {e}")
+            try:
+                c.execute("ALTER TABLE news ADD COLUMN telegram_sent INTEGER DEFAULT 0")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    logger.warning(f"ALTER TABLE telegram_sent failed: {e}")
             try:
                 c.execute("ALTER TABLE news ADD COLUMN telegram_sent INTEGER DEFAULT 0")
             except sqlite3.OperationalError as e:
@@ -329,7 +337,7 @@ class DatabaseManager:
 
     def get_words(self, book, status, search_query=None):
         """단어장 조회 (검색 지원)"""
-        query = "SELECT id, word, meaning, sentence, example, grammar FROM vocab WHERE book=? AND status=?"
+        query = "SELECT id, word, meaning, sentence, example, grammar, usage_count FROM vocab WHERE book=? AND status=?"
         params = [book, status]
 
         if search_query and search_query.strip():
@@ -341,6 +349,18 @@ class DatabaseManager:
 
         with self.get_connection() as conn:
             return conn.execute(query, params).fetchall()
+
+    def get_word_usage(self, word_id):
+        """단어 사용 횟수 가져오기"""
+        with self.get_connection() as conn:
+            result = conn.execute("SELECT usage_count FROM vocab WHERE id=?", (word_id,)).fetchone()
+            return result[0] if result else 0
+
+    def update_word_usage(self, word_id):
+        """단어 사용 횟수 1 증가"""
+        with self.get_connection() as conn:
+            conn.execute("UPDATE vocab SET usage_count = COALESCE(usage_count, 0) + 1 WHERE id = ?", (word_id,))
+            conn.commit()
 
     def update_status_bulk(self, word_ids, status):
         if not word_ids: return
@@ -982,20 +1002,20 @@ def main():
                 with c_stat:
                     status_filter = st.radio("상태", ["active", "memorized"], format_func=lambda x: "🔥 학습 중" if x=="active" else "✅ 암기 완료", horizontal=True)
 
-                # 검색 기능 추가
+                 # 검색 기능 추가
                 search_query = st.text_input("🔍 단어/의미/예문 검색", placeholder="검색어 입력...", key="vocab_search")
 
                 words = db.get_words(sel_book, status_filter, search_query)
 
                 # CSV 내보내기 버튼
                 if words:
-                    csv_data = pd.DataFrame(words, columns=["ID", "Word", "Meaning", "Sentence", "Examples", "Grammar"])
+                    csv_data = pd.DataFrame(words, columns=["ID", "Word", "Meaning", "Sentence", "Examples", "Grammar", "Usage"])
                     csv_bytes = csv_data.to_csv(index=False).encode('utf-8')
                     st.download_button(
                         label="📥 CSV 다운로드",
                         data=csv_bytes,
                         file_name=f"{sel_book}_{status_filter}.csv",
-                        mime="text/csv"
+                        use_container_width=True
                     )
 
                 if not words:
@@ -1023,15 +1043,47 @@ def main():
                                     st.rerun()
                                 else:
                                     st.warning("선택된 단어가 없습니다.")
-                    
+
                     st.divider()
+
+                    # 단어 리스트 표시 (각 단어 카드로)
+                    for w in words:
+                        word_id = w[0]
+                        with st.container():
+                            # 단어 카드 상단 (체크박스 + 슬라이더 + 단어 클릭)
+                            col_click, col_word, col_audio = st.columns([1, 14, 1])
+
+                            with col_click:
+                                st.checkbox("", key=f"chk_{word_id}", label_visibility="collapsed")
+
+                            with col_word:
+                                st.markdown(f"**{w[1]}**")
+
+                            with col_audio:
+                                st.markdown(get_audio_html(w[1]), unsafe_allow_html=True)
+
+                            # 슬라이더 표시
+                            usage_count = w[6] if len(w) > 6 else 0
+                            if usage_count > 0:
+                                st.markdown(f"<small>📊 슬라이더: {usage_count}</small>", unsafe_allow_html=True)
+
+                            # 단어 클릭 이벤트 (usage_count 증가)
+                            if st.button("🔊 단어 클릭", key=f"click_word_{word_id}", use_container_width=True):
+                                db.update_word_usage(word_id)
+                                st.rerun()
+
+                            st.markdown(f"📖 **Definition:** {w[2]}")
+                            st.markdown(f"📜 *{w[3]}*")
+                            st.caption(f"💡 {w[4]}")
+                        st.divider()
+
 
                     for w in words:
                         word_id = w[0]
                         with st.container():
                             col_chk, col_content = st.columns([1, 15])
                             with col_chk:
-                                st.checkbox("", key=f"chk_{word_id}")
+                                st.checkbox("", key=f"chk_{word_id}", label_visibility="collapsed")
                             
                             with col_content:
                                 c_word, c_audio = st.columns([1, 4])
@@ -1263,5 +1315,44 @@ python news_scheduler.py
             else:
                 st.warning("DB 파일이 없습니다.")
 
+# ==========================================
+# 🔄 백그라운드 서비스 (스케줄러, 텔레그램 봇)
+# ==========================================
+def run_scheduler(api_keys):
+    """뉴스 스케줄러 백그라운드 실행"""
+    try:
+        import news_scheduler
+        news_scheduler.main(api_keys)
+    except Exception as e:
+        logger.error(f"Scheduler error: {e}")
+
+def run_telegram_bot():
+    """텔레그램 봇 백그라운드 실행"""
+    try:
+        import telegram_bot
+        telegram_bot.main()
+    except Exception as e:
+        logger.error(f"Telegram bot error: {e}")
+
+def start_background_services(api_keys):
+    """백그라운드 서비스 시작"""
+    # 스케줄러 스레드 시작
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(api_keys,), daemon=True)
+    scheduler_thread.start()
+    logger.info("News scheduler started in background")
+
+    # 텔레그램 봇 스레드 시작
+    bot_thread = threading.Thread(target=run_telegram_bot, args=(api_keys,), daemon=True)
+    bot_thread.start()
+    logger.info("Telegram bot started in background")
+
 if __name__ == "__main__":
+    api_keys = {
+        "GOOGLE_API_KEY": st.secrets.get("GOOGLE_API_KEY", ""),
+        "GROQ_API_KEY": st.secrets.get("GROQ_API_KEY", ""),
+        "XAI_API_KEY": st.secrets.get("XAI_API_KEY", "")
+    }
+
+    start_background_services(api_keys)
+
     main()

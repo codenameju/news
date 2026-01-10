@@ -278,6 +278,12 @@ def create_vocab_card_with_refresh_button(words):
 
     message = create_vocab_card(words)
 
+    # 난수 생성 (단어 ID를 seed로 사용)
+    import random
+    seed_words = [str(w[0]) for w in words]
+    random.seed(int(''.join(seed_words)) if seed_words else int(time.time()))
+    random.shuffle(words)
+
     # "다시 받기" 버튼 (callback data는 웹훅에서 처리해야 함)
     # 간단하게는 URL이나 별도 명령으로 처리
     reply_markup = {
@@ -289,6 +295,7 @@ def create_vocab_card_with_refresh_button(words):
     }
 
     return message, reply_markup
+
 
 
 def send_vocab_quiz():
@@ -338,14 +345,25 @@ def send_vocab_quiz_manual():
 # ==========================================
 # 메인 함수
 # ==========================================
+def load_news_schedule_from_db(db):
+    """DB에서 뉴스 스케줄 시간 로드"""
+    try:
+        schedule_str = db.get_setting("news_schedule_times", "06:00,12:00,18:00")
+        return schedule_str.split(",")
+    except Exception as e:
+        logger.warning(f"Failed to load schedule from DB, using default: {e}")
+        return ["06:00", "12:00", "18:00"]
+
+
 def main():
     """메인 함수 - 스케줄러 실행 (KST 기준)"""
     logger.info("=" * 50)
     logger.info("Telegram News & Vocab Bot Started")
     logger.info("=" * 50)
 
-    # 스케줄 설정 (한국 시간 기준: 뉴스 6시, 12시, 18시)
-    news_schedule_times = ["06:00", "12:00", "18:00"]
+    # DB에서 스케줄 설정 로드
+    db = DatabaseManager(Config.DB_FILE)
+    news_schedule_times = load_news_schedule_from_db(db)
     vocab_interval_hours = 3
 
     # 마지막 실행 시간 추적 (KST)
